@@ -1,5 +1,49 @@
-dwdwdwdwdwd
-gfds,gop+j
-fgN
-RMbl¨m
-GR
+/*
+ * Descripción: Detectar pulsador
+ * Autor: Diego Piñero
+ * Empresa: IES Jaroso
+ * Fecha de creación: 
+ * Fecha de actualización: 
+ */
+
+ //Librerías necesarias para hacer funcionar el programa
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+
+//Definimos las constantes del programa
+#define PINPULSADOR1 36
+#define MASKPINPUL1 1ULL << PINPULSADOR1
+
+//Función principal
+void app_main(void)
+{
+    gpio_config_t  configPinPul1 = {
+        .pin_bit_mask = MASKPINPUL1,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&configPinPul1);
+
+    while(1)
+    {
+        gpio_get_level(PINPULSADOR1);
+    }
+    };
+
+
+    gpio_config(&configPinLed1);
+
+    while(1)
+    {
+        gpio_set_level(PINLED1, 1);
+    //Es la funcion para hacer delays que cuando llega entra y se queda hasta que no termina
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(PINLED1, 0);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
