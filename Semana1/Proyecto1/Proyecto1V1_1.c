@@ -1,0 +1,40 @@
+/*
+ * Descripción: Realizar un programa que haga que la ESP32 realice un parpadeo de 1s de periodo
+ * Autor: Diego Piñero
+ * Empresa: IES Jaroso
+ * Fecha de creación:
+ * Fecha de actualización:
+ */
+
+ //Librerías necesarias para hacer funcionar el programa
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+
+//Definimos las constantes del programa
+#define PINLED1 32
+#define MASKPINLED1 1ULL << PINLED1
+
+//Función principal
+void app_main(void)
+{
+    gpio_config_t  configPinLed1 = {
+        .pin_bit_mask = MASKPINLED1,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLUP_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+
+    gpio_config(&configPinLed1);
+
+    while(1)
+    {
+        gpio_set_level(PINLED1, 1);
+    //Es la funcion para hacer delays que cuando llega entra y se queda hasta que no termina
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(PINLED1, 0);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
