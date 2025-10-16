@@ -1,7 +1,7 @@
-/*
- * SPDX-FileCopyrightText: 2010-2022 Espressif Systems (Shanghai) CO LTD
+/* Descripción: Semáforo
+ * 
  *
- * SPDX-License-Identifier: CC0-1.0
+ * 
  */
 
 #include "freertos/FreeRTOS.h"
