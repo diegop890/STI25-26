@@ -1,0 +1,83 @@
+/*
+ * SPDX-FileCopyrightText: 2010-2022 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+ //librerias
+
+#include <stdio.h>
+#include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+
+
+//constantes
+
+#define PINSENSORTEMP 36
+#define MASKSENSORTEMP 1ULL << PINSENSORTEMP
+#define CHANNELPOT1 0
+static const char* TAG = "MyModule";
+
+//declaración funciones 
+
+void tareaSensorTemperatura( void *);
+
+//handles
+
+adc_oneshot_unit_handle_t h_cad1;
+TaskHandle_t h_tareaSensorTemperatura;
+    
+void app_main(void)
+{
+    
+    //creación tareas
+    xTaskCreate( tareaSensorTemperatura, "tareaSensorTemperatura", 2048, NULL, 1, &h_tareaSensorTemperatura);    
+    
+    while(1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "SOY EL MAIN");
+    }
+}
+
+//definición funciones tareas
+void tareaSensorTemperatura( void * parametro)
+{
+    //configurar pin gpio36 como entrada
+    gpio_config_t configGpio36 = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en =  GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pin_bit_mask = MASKSENSORTEMP
+    };
+
+    gpio_config(&configGpio36);
+
+    adc_oneshot_unit_init_cfg_t configCAD1 = {
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+        .unit_id = ADC_UNIT_1
+    };
+    adc_oneshot_new_unit(&configCAD1, &h_cad1);
+
+    adc_oneshot_chan_cfg_t configChanPot1 = {
+        .atten = ADC_ATTEN_DB_0,
+        .bitwidth = ADC_BITWIDTH_9
+    };
+    adc_oneshot_config_channel(h_cad1, CHANNELPOT1, &configChanPot1);
+
+    int valorCAD;
+
+    while(1)
+    {
+        adc_oneshot_read(h_cad1, CHANNELPOT1, &valorCAD);
+        ESP_LOGI(TAG, "valor CAD: %d", valorCAD);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+}
