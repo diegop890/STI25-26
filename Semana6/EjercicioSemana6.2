@@ -1,0 +1,156 @@
+/*
+ * Lectura ADC ESP32 con cálculo de:
+ * - Valor digital
+ * - Voltaje
+ * - Resistencia equivalente
+ * - Ángulo del potenciómetro
+ */
+
+#include <stdio.h>
+#include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+#include "driver/ledc.h"
+
+// CONSTANTES
+#define PINSENSORTEMP      36
+#define MASKSENSORTEMP     (1ULL << PINSENSORTEMP)
+#define CHANNELPOT1        ADC_CHANNEL_0
+#define ADC_MAX            512        // 9 bits -> 2^9 = 512
+#define VREF               3.3f       // Voltaje referencia ESP32
+#define R1_FIXED           10000.0f   // 10k divisor superior
+#define ANGULO_MAX         300.0f     // Potenciómetro de 300°
+
+#define PWMFREC            4000
+#define PWMDUTYRES         10
+#define PINACTUADORLED     22
+#define MASKACTUADORLED    (1ULL << PINACTUADORLED)
+
+static const char* TAG = "MyModule";
+
+// Prototipos
+void tareaSensorTemperatura(void *);
+void tareaActuadorLed(void *);
+
+// Handles
+adc_oneshot_unit_handle_t h_cad1;
+TaskHandle_t h_tareaSensorTemperatura;
+TaskHandle_t h_tareaActuadorLed;
+QueueHandle_t h_colaEntreCADyPWM;
+
+
+// MAIN
+void app_main(void)
+{
+    h_colaEntreCADyPWM = xQueueCreate(1, sizeof(int));
+
+    xTaskCreate(tareaSensorTemperatura, "tareaSensorTemperatura", 4096, NULL, 1, &h_tareaSensorTemperatura);
+    xTaskCreate(tareaActuadorLed, "tareaActuadorLed", 2048, NULL, 1, &h_tareaActuadorLed);
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "MAIN Activo");
+    }
+}
+
+
+
+// TAREA SENSOR ANALÓGICO
+void tareaSensorTemperatura(void *parametro)
+{
+    gpio_config_t configGpio36 = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en =  GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pin_bit_mask = MASKSENSORTEMP
+    };
+    gpio_config(&configGpio36);
+
+    adc_oneshot_unit_init_cfg_t configADC = {
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+        .unit_id = ADC_UNIT_1
+    };
+    adc_oneshot_new_unit(&configADC, &h_cad1);
+
+    adc_oneshot_chan_cfg_t configChan = {
+        .atten = ADC_ATTEN_DB_0,
+        .bitwidth = ADC_BITWIDTH_9
+    };
+    adc_oneshot_config_channel(h_cad1, CHANNELPOT1, &configChan);
+
+    int valorCAD;
+
+    while (1)
+    {
+        adc_oneshot_read(h_cad1, CHANNELPOT1, &valorCAD);
+
+        // ---- CÁLCULOS ----
+        float voltaje = (valorCAD * VREF) / ADC_MAX;
+
+        // divisor de tensión: Vout = Vin * (Rsensor / (R1 + Rsensor))
+        float Rsensor = (R1_FIXED * voltaje) / (VREF - voltaje);
+
+        // Ángulo del potenciómetro
+        float angulo = (voltaje / VREF) * ANGULO_MAX;
+
+
+        // ---- IMPRESIÓN ----
+        ESP_LOGI(TAG, "🔎 Lectura ADC");
+        ESP_LOGI(TAG, "Valor digital: %d", valorCAD);
+        ESP_LOGI(TAG, "Voltaje: %.3f V", voltaje);
+        ESP_LOGI(TAG, "Resistencia sensor: %.1f ohm", Rsensor);
+        ESP_LOGI(TAG, "Ángulo estimado: %.1f grados", angulo);
+
+        // enviar CAD a la tarea del LED
+        xQueueSend(h_colaEntreCADyPWM, &valorCAD, 0);
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+
+
+// TAREA PWM LED
+void tareaActuadorLed(void *parametros)
+{
+    ledc_timer_config_t configPWMLed = {
+        .clk_cfg = LEDC_USE_RC_FAST_CLK,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .freq_hz = PWMFREC,
+        .duty_resolution = PWMDUTYRES,
+        .timer_num = LEDC_TIMER_0,
+    };
+    ledc_timer_config(&configPWMLed);
+
+    ledc_channel_config_t configPWMChannelLed = {
+        .channel = LEDC_CHANNEL_0,
+        .gpio_num = PINACTUADORLED,
+        .duty = 0,
+        .hpoint = 0,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_sel = LEDC_TIMER_0,
+        .intr_type = LEDC_INTR_DISABLE,
+    };
+    ledc_channel_config(&configPWMChannelLed);
+
+    int dut = 0;
+
+    while (1)
+    {
+        xQueueReceive(h_colaEntreCADyPWM, &dut, portMAX_DELAY);
+
+        // escalado simple
+        dut = dut * 2;
+
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dut);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+        ESP_LOGI(TAG, "Brillo LED: %d", dut);
+    }
+}
