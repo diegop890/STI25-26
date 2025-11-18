@@ -88,7 +88,7 @@ void tareaSensor(void *arg)
     {
         adc_oneshot_read(h_adc, CHANNEL_ADC, &valor);
 
-        // ---- CÁLCULOS ----
+        //Cálculos
         float volt = (valor * VREF) / ADC_MAX;
 
         // Rsensor (del potenciómetro)
@@ -97,7 +97,7 @@ void tareaSensor(void *arg)
         // Ángulo del potenciómetro
         float angulo = (volt / VREF) * ANGULO_MAX;
 
-        // ---- IMPRESIÓN ----
+        //Impresión
         ESP_LOGI(TAG, "===== LECTURA SENSOR =====");
         ESP_LOGI(TAG, "Valor digital: %d", valor);
         ESP_LOGI(TAG, "Voltaje: %.3f V", volt);
