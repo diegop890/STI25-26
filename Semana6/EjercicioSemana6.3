@@ -1,0 +1,147 @@
+/*
+ * Lectura ADC ESP32 con cálculo de:
+ * - Valor digital leído
+ * - Voltaje
+ * - Resistencia (potenciómetro)
+ * - Ángulo del potenciómetro (180°)
+ */
+
+#include <stdio.h>
+#include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+#include "driver/ledc.h"
+
+// CONSTANTES DEL SISTEMA Y DEL SENSOR
+#define PIN_SENSOR       36
+#define MASK_SENSOR      (1ULL << PIN_SENSOR)
+#define CHANNEL_ADC      ADC_CHANNEL_0
+
+#define ADC_MAX          512          // 9 bits
+#define VREF             3.3f         // Voltaje referencia
+#define R1_FIXED         10000.0f     // 10 kΩ fija (arriba)
+#define R_SENSOR_MAX     1000.0f      // 1 kΩ (máximo del potenciómetro)
+#define ANGULO_MAX       180.0f       // Ángulo total
+
+// PWM
+#define PWM_FREC         4000
+#define PWM_RES          10
+#define PIN_LED          22
+#define MASK_LED         (1ULL << PIN_LED)
+
+static const char* TAG = "MyModule";
+
+// Prototipos
+void tareaSensor(void *arg);
+void tareaLED(void *arg);
+
+// Handles
+adc_oneshot_unit_handle_t h_adc;
+QueueHandle_t colaLectura;
+
+
+void app_main(void)
+{
+    colaLectura = xQueueCreate(1, sizeof(int));
+
+    xTaskCreate(tareaSensor, "tareaSensor", 4096, NULL, 1, NULL);
+    xTaskCreate(tareaLED, "tareaLED", 2048, NULL, 1, NULL);
+
+    while(1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_LOGI(TAG, "MAIN activo");
+    }
+}
+
+void tareaSensor(void *arg)
+{
+    gpio_config_t cfg = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pin_bit_mask = MASK_SENSOR
+    };
+    gpio_config(&cfg);
+
+    adc_oneshot_unit_init_cfg_t adc_cfg = {
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+        .unit_id = ADC_UNIT_1
+    };
+    adc_oneshot_new_unit(&adc_cfg, &h_adc);
+
+    adc_oneshot_chan_cfg_t chan_cfg = {
+        .atten = ADC_ATTEN_DB_0,
+        .bitwidth = ADC_BITWIDTH_9
+    };
+    adc_oneshot_config_channel(h_adc, CHANNEL_ADC, &chan_cfg);
+
+    int valor;
+
+    while(1)
+    {
+        adc_oneshot_read(h_adc, CHANNEL_ADC, &valor);
+
+        // ---- CÁLCULOS ----
+        float volt = (valor * VREF) / ADC_MAX;
+
+        // Rsensor (del potenciómetro)
+        float Rsensor = (volt * R1_FIXED) / (VREF - volt);
+
+        // Ángulo del potenciómetro
+        float angulo = (volt / VREF) * ANGULO_MAX;
+
+        // ---- IMPRESIÓN ----
+        ESP_LOGI(TAG, "===== LECTURA SENSOR =====");
+        ESP_LOGI(TAG, "Valor digital: %d", valor);
+        ESP_LOGI(TAG, "Voltaje: %.3f V", volt);
+        ESP_LOGI(TAG, "Resistencia del potenciómetro: %.2f ohm", Rsensor);
+        ESP_LOGI(TAG, "Ángulo estimado: %.1f grados", angulo);
+
+        xQueueSend(colaLectura, &valor, 0);
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void tareaLED(void *arg)
+{
+    // CONFIG PWM
+    ledc_timer_config_t timer_cfg = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = PWM_FREC,
+        .duty_resolution = PWM_RES,
+        .clk_cfg = LEDC_USE_RC_FAST_CLK
+    };
+    ledc_timer_config(&timer_cfg);
+
+    ledc_channel_config_t ch_cfg = {
+        .channel = LEDC_CHANNEL_0,
+        .gpio_num = PIN_LED,
+        .duty = 0,
+        .hpoint = 0,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_sel = LEDC_TIMER_0
+    };
+    ledc_channel_config(&ch_cfg);
+
+    int cad_value;
+
+    while(1)
+    {
+        xQueueReceive(colaLectura, &cad_value, portMAX_DELAY);
+
+        int duty = cad_value * 2;
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+        ESP_LOGI(TAG, "PWM actualizado: %d", duty);
+    }
+}
