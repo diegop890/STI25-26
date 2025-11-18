@@ -48,11 +48,6 @@ QueueHandle_t colaCAD_LED;
 QueueHandle_t colaANG_IMP;
 QueueHandle_t colaALARMAS;
 
-
-
-// ====================================================================
-// MAIN
-// ====================================================================
 void app_main(void)
 {
     // COLAS
@@ -70,11 +65,6 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(5000));
 }
 
-
-
-// ====================================================================
-// TAREA SENSOR (ADC)
-// ====================================================================
 void tareaSensor(void *arg)
 {
     adc_oneshot_unit_init_cfg_t adc_cfg = {
@@ -115,11 +105,6 @@ void tareaSensor(void *arg)
     }
 }
 
-
-
-// ====================================================================
-// TAREA LED (PWM)
-// ====================================================================
 void tareaLED(void *arg)
 {
     ledc_timer_config_t timer_cfg = {
@@ -152,11 +137,6 @@ void tareaLED(void *arg)
     }
 }
 
-
-
-// ====================================================================
-// TAREA IMPRESORA (SOLO IMPRIME CAMBIOS > 10 CAD)
-// ====================================================================
 void tareaImpresora(void *arg)
 {
     float angulo;
@@ -175,11 +155,6 @@ void tareaImpresora(void *arg)
     }
 }
 
-
-
-// ====================================================================
-// TAREA ALARMA
-// ====================================================================
 void tareaAlarma(void *arg)
 {
     float Rsensor;
