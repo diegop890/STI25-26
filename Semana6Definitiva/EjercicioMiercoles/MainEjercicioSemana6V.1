@@ -1,0 +1,243 @@
+/*
+ * SPDX-FileCopyrightText: 2010-2022 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+ //librerias
+
+#include <stdio.h>
+#include <math.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
+#include "driver/ledc.h"
+
+
+//constantes
+
+#define PINSENSORTEMP 36
+#define MASKSENSORTEMP 1ULL << PINSENSORTEMP
+#define CHANNELPOT1 0
+
+#define PINACTLUZ 22
+#define MASKACTLUZ 1ULL << PINACTLUZ
+
+#define RESPWM 10
+
+#define SIZETASK 4096
+
+
+static const char* TAG = "MyModule";
+
+//Declaración datos Struct
+typedef struct
+{
+    int id;
+    int valorI;
+    float valorF;
+}datoEnvioMonitor;
+
+//declaración funciones 
+void tareaSensorAngulos( void *);
+void tareaActuadorBomba( void *);
+void tareaMonitor(void *);
+
+//handles
+
+adc_oneshot_unit_handle_t h_cad1;
+TaskHandle_t h_tareaSensorAngulos;
+TaskHandle_t h_tareaActuadorBomba;
+TaskHandle_t h_tareaMonitor;
+
+
+QueueHandle_t h_colaSAnguloABomba;
+QueueHandle_t h_colaMonitor;
+
+ SemaphoreHandle_t h_semaforoMonitor;
+    
+void app_main(void)
+{
+    //Creación de semáforos
+    h_semaforoMonitor =  xSemaphoreCreateBinary();
+
+    //Creación de colas
+    h_colaSAnguloABomba =  xQueueCreate(1, sizeof(int));
+    h_colaMonitor =  xQueueCreate(1, sizeof(datoEnvioMonitor));
+    
+    //creación tareas
+    xTaskCreate( tareaSensorAngulos, "tareaSensorAngulos", SIZETASK, NULL, 1, &h_tareaSensorAngulos); 
+    xTaskCreate( tareaActuadorBomba, "tareaActuadorBomba", SIZETASK, NULL, 1, &h_tareaActuadorBomba);    
+    xTaskCreate( tareaMonitor, "tareaActuadorMonitor", SIZETASK, NULL, 1, &h_tareaMonitor);    
+
+    
+    while(1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "SOY EL MAIN");
+    }
+}
+
+//definición funciones tareas
+void tareaSensorAngulos( void * parametro)
+{
+    //configurar pin gpio36 como entrada
+    gpio_config_t configGpio36 = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en =  GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pin_bit_mask = MASKSENSORTEMP
+    };
+
+    gpio_config(&configGpio36);
+
+    adc_oneshot_unit_init_cfg_t configCAD1 = {
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+        .unit_id = ADC_UNIT_1
+    };
+    adc_oneshot_new_unit(&configCAD1, &h_cad1);
+
+    adc_oneshot_chan_cfg_t configChanPot1 = {
+        .atten = ADC_ATTEN_DB_0,
+        .bitwidth = ADC_BITWIDTH_9
+    };
+    adc_oneshot_config_channel(h_cad1, CHANNELPOT1, &configChanPot1);
+
+    int valorCAD = 0;
+    float angulo = 0.0;
+    int estadoFenologico = 0;   //1 - siembra, 2 - crecimiento, 3 - fruto, 4 - adulto, 5 - fuera de rango
+    datoEnvioMonitor envioMonitor = {
+        .id = 1,
+        .valorF = 0.0,
+        .valorI = 0
+    };
+
+    while(1)
+    {
+        adc_oneshot_read(h_cad1, CHANNELPOT1, &valorCAD);
+
+        if (valorCAD > 50 && valorCAD < 450)
+        {
+            angulo = -22.5 + (0.45 * valorCAD);
+
+            if (angulo > 0 && angulo < 45)
+            {
+                estadoFenologico = 1;
+            }
+
+            else if (angulo > 46 && angulo < 90)
+            {
+                estadoFenologico = 2;
+            }
+
+            else if (angulo > 91 && angulo < 135)
+            {
+                estadoFenologico = 3;
+            }
+
+            else if (angulo > 136 && angulo < 180)
+            {
+                estadoFenologico = 4;
+            }
+
+            else
+            {
+                estadoFenologico = 5;
+
+                //Enviar alarma
+
+            }
+
+            if (estadoFenologico > 5)
+            {
+                //Enviar dato estado a colaSensorActuador
+                 xQueueSend(h_colaSAnguloABomba, &estadoFenologico, 0);
+
+                //Take del semáforo del monitor
+                 xSemaphoreTake(h_semaforoMonitor, portMAX_DELAY);
+
+                //Enviar dato al monitor
+                envioMonitor.valorI = estadoFenologico;
+                xQueueSend(h_colaMonitor, &envioMonitor, 0);
+                ESP_LOGI(TAG, "cad: %d angulo: %f, estado: %d", valorCAD, angulo, estadoFenologico);
+            }
+
+            else
+            {
+                //Enviar alarma
+            }
+        }
+
+        else
+        {
+            //Enviar alarma
+            ESP_LOGI(TAG, "Valor fuera de rango");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+void tareaActuadorBomba( void * params)
+{
+    //configurar pin gpio36 como entrada
+    gpio_config_t configGpio22 = {
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en =  GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pin_bit_mask = MASKACTLUZ
+    };
+    gpio_config(&configGpio22);
+
+    ledc_timer_config_t configTimer0 = {
+        .clk_cfg = LEDC_USE_APB_CLK,
+        .timer_num = LEDC_TIMER_0,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_10_BIT,
+        .freq_hz = 4000
+    };
+    ledc_timer_config(&configTimer0);
+
+     ledc_channel_config_t configChannelActLuz = {
+        .channel = LEDC_CHANNEL_0,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty = 0,
+        .hpoint = 0,
+        .timer_sel = LEDC_TIMER_0,
+        .gpio_num = PINACTLUZ, 
+        .intr_type = LEDC_INTR_DISABLE,
+     };
+    ledc_channel_config(&configChannelActLuz);
+    
+    int dut = 0;
+    int saltoDut = pow(2,RESPWM) / 4;
+    int rangoMaxPwm = pow(2,RESPWM);
+    int estado = 0;
+
+    while(1)
+    {
+        //ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dut);
+        //ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+
+        xQueueReceive(h_colaSAnguloABomba, &estado, portMAX_DELAY);
+        ESP_LOGI(TAG, "Tarea actuador valor estado: %d", estado);
+    }
+}
+
+void tareaMonitor(void * params)
+{
+    xSemaphoreGive(h_semaforoMonitor);
+
+    while(1)
+    {
+
+        xSemaphoreGive(h_semaforoMonitor);
+    }
+}
