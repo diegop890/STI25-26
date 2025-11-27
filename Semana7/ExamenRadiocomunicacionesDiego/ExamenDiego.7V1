@@ -5,15 +5,92 @@
  */
 
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gpio.h"
-#include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_adc/adc_oneshot.h"
 
+
+#define LOG_TAG "VELETA_SENSOR"
+#define ADC_CHANNEL_NUM 6      // GPIO34
+#define ADC_UNIT_USED ADC_UNIT_1
+
+
+float referencia_angulos[8] = {0, 45, 90, 135, 180, 225, 270, 315};
+float referencia_voltajes[8] = {0.221, 0.442, 0.663, 0.884, 1.105, 1.326, 1.547, 1.768};
+const char* nombres_direcciones[8] = {"N", "NE", "E", "SE", "S", "SO", "O", "NO"};
+
+
+#define OFFSET_ANGULO 135
 
 
 void app_main(void)
 {
-    
+    esp_err_t ret;
+    adc_oneshot_unit_handle_t handle_adc;
+
+
+    adc_oneshot_unit_init_cfg_t cfg_unidad = {
+        .unit_id = ADC_UNIT_USED,
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE
+    };
+    ret = adc_oneshot_new_unit(&cfg_unidad, &handle_adc);
+    if (ret != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "Error inicializando ADC: %d", ret);
+        return;
+    }
+
+
+    adc_oneshot_chan_cfg_t cfg_canal = {
+        .bitwidth = ADC_BITWIDTH_9,
+        .atten = ADC_ATTEN_DB_6
+    };
+    ret = adc_oneshot_config_channel(handle_adc, ADC_CHANNEL_NUM, &cfg_canal);
+    if (ret != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "Error configurando canal ADC: %d", ret);
+        return;
+    }
+
+
+    int valor_adc = 0;
+    float voltaje_sensor = 0.0;
+    int indice_angulo;
+    int num_muestras = 50;
+
+
+    while (1) {
+        int suma_adc = 0;
+        for (int i = 0; i < num_muestras; i++) {
+            ret = adc_oneshot_read(handle_adc, ADC_CHANNEL_NUM, &valor_adc);
+            if (ret != ESP_OK) break;
+            suma_adc += valor_adc;
+        }
+        valor_adc = suma_adc / num_muestras;
+
+
+        voltaje_sensor = 0.221 + ((1.768 - 0.221)/511.0) * valor_adc;
+
+
+        float menor_error = 9999.0;
+        indice_angulo = 0;
+        for (int i = 0; i < 8; i++) {
+            float error = fabs(voltaje_sensor - referencia_voltajes[i]);
+            if (error < menor_error) {
+                menor_error = error;
+                indice_angulo = i;
+            }
+        }
+
+
+        int angulo_final = ((int)referencia_angulos[indice_angulo] - OFFSET_ANGULO + 360) % 360;
+
+
+        ESP_LOGI(LOG_TAG, "ADC: %d\tVoltaje: %.3f V\tÁngulo aprox: %d°\tDirección: %s",
+                 valor_adc, voltaje_sensor, angulo_final, nombres_direcciones[indice_angulo]);
+
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }
