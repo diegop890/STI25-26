@@ -13,6 +13,8 @@
 #include "nvs_flash.h"
 #include "esp_wifi.h"
 
+void eventWifi(void* handler_arg, esp_event_base_t base, int32_t id, void* event_data);
+
 void app_main(void)
 {
     //Cremaos partición para la pila TCP/IP
@@ -38,4 +40,9 @@ void app_main(void)
 
     esp_wifi_set_config(WIFI_IF_STA, &configWifi2);
     esp_wifi_connect();
+}
+
+void eventWifi(void* handler_arg, esp_event_base_t base, int32_t id, void* event_data)
+{
+
 }
